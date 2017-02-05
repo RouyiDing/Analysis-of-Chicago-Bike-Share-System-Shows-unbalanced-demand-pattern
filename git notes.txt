@@ -1,1 +1,4 @@
-s 
+$ git status  // 查看有哪些文件已经准备好commit（git add后的状态）
+$ git log   // 查看commit的历史
+$ git pull  // 从远程仓库拉取最新的代码到本地分支，如果有conflict则需要手动解决
+$ git push origin dev:devRemote    //从本地分支dev上传到远程分支devRemote；如果devRemote不存在于远程仓库，就会自动新建；如果本地分支为空，则删除远程分支devRemote
