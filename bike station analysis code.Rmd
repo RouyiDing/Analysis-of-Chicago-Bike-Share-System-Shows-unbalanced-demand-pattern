@@ -1,0 +1,586 @@
+---
+title: "Divvy Bike Share Program Analysis"
+author: "Jialu Chen, Yang Qu, Rouyi Ding"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+##Introduction
+&emsp;&emsp;Biking is beneficial to both of our health and environment. Many cities have launched public bike-sharing system to promote bicycle usage. In bike-sharing systems, people can borrow bikes from one station and return the bike back to any stations in the city, which can be used as a short-distance trip supplement for private vehicles as well as regular public transportation. Divvy program in Chicago is one of the mature systems that we would like to explore.
+
+&emsp;&emsp;In bike-share system, the travel behaviors of people in different age and gender groups can be quite different. Meanwhile, for stations located at different places in the city, the bike usage can be quite skewed and unbalanced. Some stations that individuals like to borrow bikes from will lack enough bikes for people to check out, while some other stations that people normally return the bikes to will get jammed easily without enough docks for upcoming bikes. Therefore, we want to discover different usage patterns among various user groups and time periods, as well as flow patterns of stations.
+
+&emsp;&emsp;The bicycle sharing system in Chicago can be separated into 4 segments according to flow patterns. In these four segments, the flow patterns of transition and business areas are opposite and obviously unbalanced. This unbalanced pattern is caused by commuters.
+
+##Method
+### Data Source
+&emsp;&emsp;We investigated the dynamic bike flow patterns and customer types of bike sharing system in Chicago from January 2015 to December 2015. Divvy was launched in late June 2013. The system had 474 stations and 8274 bikes in 2015, and increased to 535 stations and 9214 bikes in 2016, which greatly improved its coverage and maximum working load. All bikes are available 24 hours, each station has a touch screen kiosk and docking system which support bikes check-in and check-out using a member key or ride code. Bike-sharing system allows people to borrow bikes with either “24-hour pass” or “annual subscribed membership”. “24-hour pass” is usually preferred by people for temporary usage, such as tourists and occasional riders, but charges per day are slightly higher. Meanwhile, “annual subscribed membership” is a great deal for people with frequent travel needs, such as local office workers and students.
+
+&emsp;&emsp;The data we used in this project was obtained from Divvy website (https://www.divvybikes.com).The datasets include trip, station and customer type information from January 2015 to December 2015. Trip dataset has 3183439 observations described by trip ID, start time and station, stop time and station and trip duration. Station dataset consists of station name, dock capacity, coordinates and created time. As for customer type, it is correlated with each trip and includes information about gender, age and user type.
+
+### Data Cleaning
+&emsp;&emsp;Since the raw data we downloaded from Divvy website is already pretty tidy, our data cleaning is completed in only three steps. Firstly, we filtered and deleted trips with duration less than 1 minute, because these trips are too short and may not show a common use rule of the bike-sharing system. As a result, about 3.76 percent of trips were deleted. Secondly, in order to achieve standard data formats and make further statistical analysis easier, we transferred data to numeric type and unified the time format. Thirdly, we generated more variables, such as the date, time, exact hour and weekday variables from the original start time and stop time.
+
+###Statistical Techniques
+&emsp;&emsp;To investigate how flow patterns vary among stations, we first summarized demand features, namely, the amount of net check-in of each station, and then grouped stations with similar demand features. In this way, we could find out spatiotemporal over-demands distribution for bikes and docks in 2015 and further analyze the reasons for unbalance.
+
+&emsp;&emsp;Specifically, the first step was to define the demand features for stations, we first divided a day into 12 2-hour time windows starting from 1:00am. Then for each station, we calculated the net check-in amount which was given by difference between total check-in amount and total check-out amount in each time window.
+
+&emsp;&emsp;The second step was to group stations with similar demand features into same cluster. According to previous study, methods like K-means and hierarchical clustering are often used. Here we applied the hierarchical clustering method.Grouping the stations was an unsupervised problem without a true response and in hierarchical clustering, we could choose how many clusters we should have according to the dendrogram, while in K-Means method we need to set number of clusters K first, of which we didn't have any prior knowledge.
+
+&emsp;&emsp;In hierarchical clustering, we got a distance matrix from R function `dist()` to evaluate the dissimilarity of stations according to 12 net check-ins. A dendrogram was built by this distance matrix using `hclust()`. This dendrogram was an upside-down tree starting from treating each station as one cluster and then fusing the most similar clusters until all stations belong to one single cluster. According to the shape of the tree, we cut the dendrogram at a reasonable height, which resulted in 4 clusters. `cutree()` gave us the final clusters of stations. Here we chose manhattan distance in `dist()` to calculate dissimilarities between stations and complete linkage in `hclust()` to define dissimilarities between clusters.
+
+##Results
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+```{r,echo=F,  message=FALSE, warning=FALSE}
+rm(list = ls()) 
+library(readr) 
+library(dplyr) 
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(ggmap)
+library(ape)
+
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+setwd("~/Documents/679-2/project/data/data_final")
+station = read_csv(file = "Divvy_Stations_2015.csv")
+Y2015Q1raw = read_csv(file = "Divvy_Trips_2015-Q1.csv")
+# 202349 obs
+Y2015Q2raw = read_csv(file = "Divvy_Trips_2015-Q2.csv")
+# 893890 obs
+Y2015M7raw = read_csv(file = "Divvy_Trips_2015_07.csv")
+Y2015M8raw = read_csv(file = "Divvy_Trips_2015_08.csv")
+Y2015M9raw = read_csv(file = "Divvy_Trips_2015_09.csv")
+Y2015Q4raw = read_csv(file = "Divvy_Trips_2015_Q4.csv")
+# 631365 obs
+Y2015Q3raw = rbind(Y2015M7raw, Y2015M8raw, Y2015M9raw)
+# 1455835 obs
+Y2015raw = rbind(Y2015Q1raw, Y2015Q2raw, Y2015Q3raw, Y2015Q4raw)
+# 3183439 obs
+
+```
+
+
+```{r,echo=F,  message=FALSE, warning=FALSE}
+Y2015Q1 = Y2015Q1raw %>% filter(tripduration > 60 & from_station_id != to_station_id)
+# 197842 obs
+Y2015Q2 = Y2015Q2raw %>% filter(tripduration > 60 & from_station_id != to_station_id)
+# 854564 obs
+Y2015Q3 = Y2015Q3raw %>% filter(tripduration > 60 & from_station_id != to_station_id)
+# 1393304 obs
+Y2015Q4 = Y2015Q4raw %>% filter(tripduration > 60 & from_station_id != to_station_id)
+# 617921 obs
+Y2015 = Y2015raw %>% filter(tripduration > 60 & from_station_id != to_station_id)
+# 3063631 obs
+```
+
+
+```{r,echo=F,  message=FALSE, warning=FALSE}
+# separate date day month year hour minute
+Y2015Q1_NEW = Y2015Q1 %>% separate(starttime, sep = " ", into = c("start_date", "start_time")) %>% separate(stoptime, sep = " ", into = c("stop_date", "stop_time")) %>% separate(start_time, sep = ":", into = c("start_hour", "start_min"), remove = F) %>% separate(stop_time, sep = ":", into = c("stop_hour", "stop_min"), remove = F) %>% separate(start_date, sep = "/", into = c("start_month", "start_day", "start_year"), remove = F) %>% separate(stop_date, sep = "/", into = c("stop_month", "stop_day", "stop_year"), remove = F)
+
+Y2015Q2_NEW = Y2015Q2 %>% separate(starttime, sep = " ", into = c("start_date", "start_time")) %>% separate(stoptime, sep = " ", into = c("stop_date", "stop_time")) %>% separate(start_time, sep = ":", into = c("start_hour", "start_min"), remove = F) %>% separate(stop_time, sep = ":", into = c("stop_hour", "stop_min"), remove = F) %>% separate(start_date, sep = "/", into = c("start_month", "start_day", "start_year"), remove = F) %>% separate(stop_date, sep = "/", into = c("stop_month", "stop_day", "stop_year"), remove = F)
+
+Y2015Q3_NEW = Y2015Q3 %>% separate(starttime, sep = " ", into = c("start_date", "start_time")) %>% separate(stoptime, sep = " ", into = c("stop_date", "stop_time")) %>% separate(start_time, sep = ":", into = c("start_hour", "start_min"), remove = F) %>% separate(stop_time, sep = ":", into = c("stop_hour", "stop_min"), remove = F) %>% separate(start_date, sep = "/", into = c("start_month", "start_day", "start_year"), remove = F) %>% separate(stop_date, sep = "/", into = c("stop_month", "stop_day", "stop_year"), remove = F)
+
+Y2015Q4_NEW = Y2015Q4 %>% separate(starttime, sep = " ", into = c("start_date", "start_time")) %>% separate(stoptime, sep = " ", into = c("stop_date", "stop_time")) %>% separate(start_time, sep = ":", into = c("start_hour", "start_min"), remove = F) %>% separate(stop_time, sep = ":", into = c("stop_hour", "stop_min"), remove = F) %>% separate(start_date, sep = "/", into = c("start_month", "start_day", "start_year"), remove = F) %>% separate(stop_date, sep = "/", into = c("stop_month", "stop_day", "stop_year"), remove = F)
+
+Y2015_NEW = Y2015 %>% separate(starttime, sep = " ", into = c("start_date", "start_time")) %>% separate(stoptime, sep = " ", into = c("stop_date", "stop_time")) %>% separate(start_time, sep = ":", into = c("start_hour", "start_min"), remove = F) %>% separate(stop_time, sep = ":", into = c("stop_hour", "stop_min"), remove = F) %>% separate(start_date, sep = "/", into = c("start_month", "start_day", "start_year"), remove = F) %>% separate(stop_date, sep = "/", into = c("stop_month", "stop_day", "stop_year"), remove = F)
+```
+
+
+```{r,echo=F,  message=FALSE, warning=FALSE}
+# changeinto date format
+Y2015Q1_NEW$start_date = as.Date(Y2015Q1_NEW$start_date, "%m/%d/%Y")
+Y2015Q2_NEW$start_date = as.Date(Y2015Q2_NEW$start_date, "%m/%d/%Y")
+Y2015Q3_NEW$start_date = as.Date(Y2015Q3_NEW$start_date, "%m/%d/%Y")
+Y2015Q4_NEW$start_date = as.Date(Y2015Q4_NEW$start_date, "%m/%d/%Y")
+Y2015_NEW$start_date = as.Date(Y2015_NEW$start_date, "%m/%d/%Y")
+
+Y2015Q1_NEW$stop_date = as.Date(Y2015Q1_NEW$stop_date, "%m/%d/%Y")
+Y2015Q2_NEW$stop_date = as.Date(Y2015Q2_NEW$stop_date, "%m/%d/%Y")
+Y2015Q3_NEW$stop_date = as.Date(Y2015Q3_NEW$stop_date, "%m/%d/%Y")
+Y2015Q4_NEW$stop_date = as.Date(Y2015Q4_NEW$stop_date, "%m/%d/%Y")
+Y2015_NEW$stop_date = as.Date(Y2015_NEW$stop_date, "%m/%d/%Y")
+
+```
+
+
+```{r,echo=F, message=FALSE, warning=FALSE}
+Y2015_NEW = Y2015_NEW %>% mutate(start_weekday = weekdays(start_date), stop_weekday = weekdays(stop_date)) 
+bike_weekday=Y2015_NEW %>% filter(start_weekday %in% c("Monday","Tuesday","Wednesday","Thursday","Friday")) 
+
+bike_weekend=Y2015_NEW %>% filter(start_weekday %in% c("Saturday","Sunday")) 
+```
+
+```{r,echo=F,  message=FALSE, warning=FALSE}
+# time window separate
+Y2015_NEW0103start = Y2015_NEW %>% filter(start_hour %in% c("1","2"))
+Y2015_NEW0305start = Y2015_NEW %>% filter(start_hour %in% c("3","4"))
+Y2015_NEW0507start = Y2015_NEW %>% filter(start_hour %in% c("5","6"))
+Y2015_NEW0709start = Y2015_NEW %>% filter(start_hour %in% c("7","8"))
+Y2015_NEW0911start = Y2015_NEW %>% filter(start_hour %in% c("9","10"))
+Y2015_NEW1113start = Y2015_NEW %>% filter(start_hour %in% c("11","12"))
+Y2015_NEW1315start = Y2015_NEW %>% filter(start_hour %in% c("13","14"))
+Y2015_NEW1517start = Y2015_NEW %>% filter(start_hour %in% c("15","16"))
+Y2015_NEW1719start = Y2015_NEW %>% filter(start_hour %in% c("17","18"))
+Y2015_NEW1921start = Y2015_NEW %>% filter(start_hour %in% c("19","20"))
+Y2015_NEW2123start = Y2015_NEW %>% filter(start_hour %in% c("21","22"))
+Y2015_NEW2301start = Y2015_NEW %>% filter(start_hour %in% c("23","0"))
+
+Y2015_NEW0103stop = Y2015_NEW %>% filter(stop_hour %in% c("1","2"))
+Y2015_NEW0305stop = Y2015_NEW %>% filter(stop_hour %in% c("3","4"))
+Y2015_NEW0507stop = Y2015_NEW %>% filter(stop_hour %in% c("5","6"))
+Y2015_NEW0709stop = Y2015_NEW %>% filter(stop_hour %in% c("7","8"))
+Y2015_NEW0911stop = Y2015_NEW %>% filter(stop_hour %in% c("9","10"))
+Y2015_NEW1113stop = Y2015_NEW %>% filter(stop_hour %in% c("11","12"))
+Y2015_NEW1315stop = Y2015_NEW %>% filter(stop_hour %in% c("13","14"))
+Y2015_NEW1517stop = Y2015_NEW %>% filter(stop_hour %in% c("15","16"))
+Y2015_NEW1719stop = Y2015_NEW %>% filter(stop_hour %in% c("17","18"))
+Y2015_NEW1921stop = Y2015_NEW %>% filter(stop_hour %in% c("19","20"))
+Y2015_NEW2123stop = Y2015_NEW %>% filter(stop_hour %in% c("21","22"))
+Y2015_NEW2301stop = Y2015_NEW %>% filter(stop_hour %in% c("23","0"))
+```
+
+```{r,echo=F, message=FALSE, warning=FALSE}
+# count check_out and check_in number
+#0103
+Y0103out = Y2015_NEW0103start %>% count(from_station_id)
+Y0103in = Y2015_NEW0103start %>% count(to_station_id)
+
+Y0305out = Y2015_NEW0305start %>% count(from_station_id)
+Y0305in = Y2015_NEW0305start %>% count(to_station_id)
+
+Y0507out = Y2015_NEW0507start %>% count(from_station_id)
+Y0507in = Y2015_NEW0507start %>% count(to_station_id)
+
+Y0709out = Y2015_NEW0709start %>% count(from_station_id)
+Y0709in = Y2015_NEW0709start %>% count(to_station_id)
+
+Y0911out = Y2015_NEW0911start %>% count(from_station_id)
+Y0911in = Y2015_NEW0911start %>% count(to_station_id)
+
+Y1113out = Y2015_NEW1113start %>% count(from_station_id)
+Y1113in = Y2015_NEW1113start %>% count(to_station_id)
+
+Y1315out = Y2015_NEW1315start %>% count(from_station_id)
+Y1315in = Y2015_NEW1315start %>% count(to_station_id)
+
+Y1517out = Y2015_NEW1517start %>% count(from_station_id)
+Y1517in = Y2015_NEW1517start %>% count(to_station_id)
+
+Y1719out = Y2015_NEW1719start %>% count(from_station_id)
+Y1719in = Y2015_NEW1719start %>% count(to_station_id)
+
+Y1921out = Y2015_NEW1921start %>% count(from_station_id)
+Y1921in = Y2015_NEW1719start %>% count(to_station_id)
+
+Y2123out = Y2015_NEW2123start %>% count(from_station_id)
+Y2123in = Y2015_NEW2123start %>% count(to_station_id)
+
+Y2301out = Y2015_NEW2301start %>% count(from_station_id)
+Y2301in = Y2015_NEW2301start %>% count(to_station_id)
+```
+
+
+```{r, echo=F, message=FALSE, warning=FALSE}
+# join the check in and check out
+# first not calculate net check in and check out
+# do clustering accourding to 24 variables, i.e. all check in and out info.
+# attempt fail when use 24 variables!!!!
+Ytotal = station %>% left_join(Y0103in, c("id" = "to_station_id")) %>% left_join(Y0103out, c("id" = "from_station_id")) %>% left_join(Y0305in, c("id" = "to_station_id")) %>% left_join(Y0305out, c("id" = "from_station_id")) %>% left_join(Y0507in, c("id" = "to_station_id")) %>% left_join(Y0507out, c("id" = "from_station_id")) %>% left_join(Y0709in, c("id" = "to_station_id")) %>% left_join(Y0709out, c("id" = "from_station_id")) %>% left_join(Y0911in, c("id" = "to_station_id")) %>% left_join(Y0911out, c("id" = "from_station_id")) %>% left_join(Y1113in, c("id" = "to_station_id")) %>% left_join(Y1113out, c("id" = "from_station_id")) %>% left_join(Y1315in, c("id" = "to_station_id")) %>% left_join(Y1315out, c("id" = "from_station_id")) %>% left_join(Y1517in, c("id" = "to_station_id")) %>% left_join(Y1517out, c("id" = "from_station_id")) %>% left_join(Y1719in, c("id" = "to_station_id")) %>% left_join(Y1719out, c("id" = "from_station_id")) %>% left_join(Y1921in, c("id" = "to_station_id")) %>% left_join(Y1921out, c("id" = "from_station_id")) %>% left_join(Y2123in, c("id" = "to_station_id")) %>% left_join(Y2123out, c("id" = "from_station_id")) %>% left_join(Y2301in, c("id" = "to_station_id")) %>% left_join(Y2301out, c("id" = "from_station_id"))
+
+
+Ytotal = Ytotal %>% select(-name, -latitude, -longitude, -dpcapacity, -landmark)
+colnames(Ytotal) = c("id", "X0103in", "X0103out", "X0305in", "X0305out", "X0507in", "X0507out", "X0709in", "X0709out", "X0911in", "X0911out", "X1113in", "X1113out", "X1315in", "X1315out", "X1517in", "X1517out", "X1719in", "X1719out", "X1921in", "X1921out", "X2123in", "X2123out", "X2301in", "X2301out")
+for(i in 2:dim(Ytotal)[2]){
+  Ytotal[which(is.na(Ytotal[, i])), i] = 0
+}
+map_of_Chicago <- get_map(location = c(lon = mean(station$longitude),lat = mean(station$latitude)),zoom = 12,maptype = "roadmap", scale = 2)
+```
+
+```{r, echo=F, message=FALSE, warning=FALSE,fig.cap="Cluster Dendrogram for Net Check-in Amounts", fig.pos="H"}
+knitr::opts_chunk$set(fig.pos = 'H')
+Ynet = Ytotal
+Ynet = Ynet %>% mutate(net0103 = X0103in - X0103out, net0305 = X0305in - X0305out, net0507 = X0507in - X0507out, net0709 = X0709in - X0709out, net0911 = X0911in - X0911out, net1113 = X1113in - X1113out, net1315 = X1315in - X1315out, net1517 = X1517in - X1517out, net1719 = X1719in - X1719out, net1921 = X1921in - X1921out, net1921 = X1921in - X1921out, net2123 = X2123in - X2123out, net2301 = X2301in - X2301out)
+mnet = data.frame(Ynet[, 26:37], row.names = as.character(Ynet$id))
+distnet = dist(mnet, method = "manhattan")
+clustnet = hclust(distnet, method = "complete")
+par(cex = 0.7)
+plot(as.phylo(clustnet),label.offset = 1)
+par(cex = 1)
+```
+
+&emsp;&emsp;In hierarchical clustering, We got dendrogram shown in Figure1. According to the dendrogram, we cut the tree at k = 4 and got 4 clusters. The resulting clusters are shown in Figure 2. Then for each cluster, we investigated different demand features by comparing check-in and check-out amount within each hour. 
+
+```{r,echo=F, message=FALSE, warning=FALSE,fig.cap="Flow Pattern Clusters for Stations in Chicago",fig.pos="H"}
+knitr::opts_chunk$set(fig.pos = 'H')
+outnet = cutree(clustnet, k = 4)
+netclass1 = as.numeric(names(outnet[outnet == 1]))
+netclass2 = as.numeric(names(outnet[outnet == 2]))
+netclass3 = as.numeric(names(outnet[outnet == 3]))
+netclass4 = as.numeric(names(outnet[outnet == 4]))
+ggmap(map_of_Chicago)+
+  geom_point(aes(x = longitude, y = latitude, colour = "cluster1 as general part"), size = 1.5, 
+             data = station[station$id %in% netclass1, ]) + 
+  geom_point(aes(x = longitude, y = latitude, colour = "cluster2 as tourist part"), size = 1.5, data =station[station$id %in% netclass2, ]) + 
+  geom_point(aes(x = longitude, y = latitude, colour = "cluster3 as business part"), size = 1.5, data =station[station$id %in% netclass3, ]) + 
+  geom_point(aes(x = longitude, y = latitude, colour = "cluster4 as transition part"), size = 1.5, data =station[station$id %in% netclass4, ])
+```
+
+&emsp;&emsp;Figure3 shows the flow patterns of the four clusters. we could clearly see four different flow patterns and spatiotemporal distributions of clusters.
+
+```{r, echo=F,message=FALSE, warning=FALSE,fig.cap="Check-in and Check-out Demand for General Stations"  ,fig.pos="H"}
+knitr::opts_chunk$set(fig.pos = 'H')
+plotY = Y2015_NEW
+plotY$start_hour = as.numeric(plotY$start_hour)
+plotY$stop_hour = as.numeric(plotY$stop_hour)
+plotYfrom1 = plotY %>% filter(from_station_id %in% netclass1)
+plotYto1 = plotY %>% filter(to_station_id %in% netclass1)
+plotYfrom2 = plotY %>% filter(from_station_id %in% netclass2)
+plotYto2 = plotY %>% filter(to_station_id %in% netclass2)
+plotYfrom3 = plotY %>% filter(from_station_id %in% netclass3)
+plotYto3 = plotY %>% filter(to_station_id %in% netclass3)
+plotYfrom4 = plotY %>% filter(from_station_id %in% netclass4)
+plotYto4 = plotY %>% filter(to_station_id %in% netclass4)
+
+nfrom1 = plotYfrom1 %>% count(start_hour)
+nto1 = plotYto1 %>% count(stop_hour)
+nfrom2 = plotYfrom2 %>% count(start_hour)
+nto2 = plotYto2 %>% count(stop_hour)
+nfrom3 = plotYfrom3 %>% count(start_hour)
+nto3 = plotYto3 %>% count(stop_hour)
+nfrom4 = plotYfrom4 %>% count(start_hour)
+nto4 = plotYto4 %>% count(stop_hour)
+
+p1<-ggplot()+
+  geom_line(aes(x = nfrom1$start_hour, y = nfrom1$n, colour = "check out"))+
+geom_line(aes(x = nto1$stop_hour, y = nto1$n, colour = "check in"))+xlab("Time in a day") +
+  ylab("Amount of checkin and checkout")+ ggtitle("General")
+
+p2<-ggplot()+
+  geom_line(aes(x = nfrom2$start_hour, y = nfrom2$n, colour = "check out"))+
+geom_line(aes(x = nto2$stop_hour, y = nto2$n, colour = "check in"))+xlab("Time in a day") +
+  ylab("Amount of checkin and checkout")+ ggtitle("Tourist")
+
+p3<-ggplot()+
+  geom_line(aes(x = nfrom3$start_hour, y = nfrom3$n, colour = "check out"))+
+geom_line(aes(x = nto3$stop_hour, y = nto3$n, colour = "check in"))+xlab("Time in a day") +
+  ylab("Amount of checkin and checkout")+ ggtitle("Business")
+
+p4<-ggplot()+
+  geom_line(aes(x = nfrom4$start_hour, y = nfrom4$n, colour = "check out"))+
+geom_line(aes(x = nto4$stop_hour, y = nto4$n, colour = "check in"))+xlab("Time in a day") +ylab("Amount of checkin and checkout")+ ggtitle("Transition")
+multiplot(p1, p2, p3, p4, cols=2)
+
+
+```
+
+
+&emsp;&emsp;For cluster 1, it included most stations and nearly covered the whole Chicago except center part, thus we referred to cluster 1 as general area in following analysis. Looking at the flow pattern shown in Figure3, we found that the check-in and check-out behaviour were quite similar during a day. The check-out amount exceeded check-in amount slightly in morning peak hours and opposite in afternoon peak hours. As for noon time,there were still a large amount of trips taking place in cluster 1. In general, there were no significant peaks in the morning and afternoon.
+
+&emsp;&emsp;For cluster 2, there were only 3 stations included, which were near the Great Lake, thus we referred to cluster 2 as tourist area. According to figure3, Check-in and check-out patterns of cluster 2 were quite similar with the number of check-in slightly greater than check-out. Trips from these stations mainly happened between 10:00 am and 8:00 pm and reached peak at about 3:00 pm.
+
+&emsp;&emsp;For cluster 3, all stations were near the center of Chicago. In the morning between 5:00am and 10:00am, a large amount of bikes were checked in with only a little checked out. While in the afternoon after 3pm, the amount of check-in decreased a lot while number of check-out went up dramatically. With this opposite demand for check-in and check-out, we speculated that cluster 3 was a business area and people came to work in the morning and left in the afternoon. Thus, we referred to this cluster as business area.
+
+&emsp;&emsp;For cluster 4,its flow pattern is almost opposite from cluster 3, with people mostly checked out in the morning and checked in in the afternoon, which suggested that people might ride a bike from cluster 4 area to work. From the map, we found that these stations were near the Union Station and a few other big stations. It is likely that people took subways to these subway stations and then switched to a bike to go to work. We will refer to this cluster as transition area.
+
+&emsp;&emsp;According to the analysis above, we put our focus on two clusters: business area and transition area, because these two areas have especially unbalanced check-in and check-out patterns during morning peak hours and afternoon peak hours, which reflects serious over-demand for bikes and docks.
+
+&emsp;&emsp;In order to find the main source of over-demand in different time periods, we used pie graph to show how each cluster contributed to the trips associated with business and transition clusters respectively and compared performance of three different time periods. First, we divided time into three periods: morning peak hours (5:00 am - 10:00 am), noon hours (10: 00 am – 3:00 pm) and afternoon peak hours (3:00 pm – 6:00 pm). Secondly, we calculated the relative number of trips checked out from transition cluster. Since the number of stations in each cluster varies a lot, the cluster with more stations is likely to have more trips. Therefore, we divided the number of trips by the number of stations to get relative number of trips, which eliminated the effect of clusters’ difference in the amount of stations. Results about trips went to transition area was got in similar way.
+
+&emsp;&emsp;The result of trips checked-out from transition area were shown in Figure4. We found that in morning peak hours, more than half trips went to business area. While in other two time periods, the number of trips went to business area decreased obviously. Together with the flow pattern of transition area,these pie graphs might be an evidence that the over-demand for bikes during morning peak hours was caused by people going to work.
+
+
+
+```{r,echo=F, message=FALSE, warning=FALSE,fig.cap="Proportion of Check-out from Residence in 5:00 - 10:00, 10:00 - 15:00 and 15:00 - 20:00 ",  fig.pos="H"}
+knitr::opts_chunk$set(fig.pos = 'H')
+residence = netclass4
+business = netclass3
+general = netclass1
+tourist = netclass2
+#######5:00 am to 10:00 am  ###########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% business) %>% filter(between(as.numeric(start_hour), 5, 10))
+RtoBcount = RtoB %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% general) %>% filter(between(as.numeric(start_hour), 5, 10))
+RtoGcount = RtoG %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% tourist) %>% filter(between(as.numeric(start_hour), 5, 10))
+RtoTcount = RtoT %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+par(mfrow=c(1,3))
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]), labels = c("business", "general", "tourist"))
+
+#### 10:00 am to 15:00 am #########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% business) %>% filter(between(as.numeric(start_hour), 10, 15))
+RtoBcount = RtoB %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% general) %>% filter(between(as.numeric(start_hour), 10, 15))
+RtoGcount = RtoG %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% tourist) %>% filter(between(as.numeric(start_hour), 10, 15))
+RtoTcount = RtoT %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]),
+labels = c("business", "general", "tourist"))
+
+
+#### 15:00 am to 20:00 am #########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% business) %>% filter(between(as.numeric(start_hour), 15, 20))
+RtoBcount = RtoB %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% general) %>% filter(between(as.numeric(start_hour), 15, 20))
+RtoGcount = RtoG %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% residence, to_station_id %in% tourist) %>% filter(between(as.numeric(start_hour), 15, 20))
+RtoTcount = RtoT %>% group_by(to_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]), labels = c("business", "general", "tourist"))
+```
+
+&emsp;&emsp;As for trips went to transition area, we got the plot below, which had opposite proportion changes in three time periods. In three pie plots, trips from business area were more than all other areas, especially in afternoon peak hours, which again might be caused by commuters.
+
+```{r,echo=F, message=FALSE, warning=FALSE,fig.cap="Proportion of Check-in to Residence in 5:00 - 10:00, 10:00 - 15:00 and 15:00 - 20:00 "}
+knitr::opts_chunk$set(fig.pos = 'H')
+
+#######5:00 am to 10:00 am  ###########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% business, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 5, 10))
+RtoBcount = RtoB %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% general, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 5, 10))
+RtoGcount = RtoG %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% tourist, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 5, 10))
+RtoTcount = RtoT %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+par(mfrow=c(1,3))
+
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]),labels = c("business", "general", "tourist"))
+
+#### 10:00 am to 15:00 am #########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% business, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 10, 15))
+RtoBcount = RtoB %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% general, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 10, 15))
+RtoGcount = RtoG %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% tourist, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 10, 15))
+RtoTcount = RtoT %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]),labels = c("business", "general", "tourist"))
+
+#### 15:00 am to 20:00 am #########
+RtoB = Y2015_NEW %>% filter(from_station_id %in% business, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 15, 20))
+RtoBcount = RtoB %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoG = Y2015_NEW %>% filter(from_station_id %in% general, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 15, 20))
+RtoGcount = RtoG %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+RtoT = Y2015_NEW %>% filter(from_station_id %in% tourist, to_station_id %in% residence) %>% filter(between(as.numeric(stop_hour), 15, 20))
+RtoTcount = RtoT %>% group_by(from_station_id) %>% summarise(count = n()) %>% arrange(desc(count))
+
+pie(x = c(dim(RtoB)[1]/dim(RtoBcount)[1], dim(RtoG)[1]/dim(RtoGcount)[1], dim(RtoT)[1]/dim(RtoTcount)[1]),labels = c("business", "general", "tourist"))
+```
+
+
+&emsp;&emsp;To further ensure our guess that the unbalanced pattern in transition and business area were mainly caused by people going to work, we studied the check-in and check-out patterns separately in weekdays and weekends and found there were different flow patterns between trips in weekdays and weekends.
+
+
+```{r,echo=F,message=FALSE, warning=FALSE,fig.cap="Flow Pattern in Weekend"}
+plotY = bike_weekend
+plotY$start_hour = as.numeric(plotY$start_hour)
+plotY$stop_hour = as.numeric(plotY$stop_hour)
+plotYfrom1 = plotY %>% filter(from_station_id %in% netclass1)
+plotYto1 = plotY %>% filter(to_station_id %in% netclass1)
+plotYfrom2 = plotY %>% filter(from_station_id %in% netclass2)
+plotYto2 = plotY %>% filter(to_station_id %in% netclass2)
+plotYfrom3 = plotY %>% filter(from_station_id %in% netclass3)
+plotYto3 = plotY %>% filter(to_station_id %in% netclass3)
+plotYfrom4 = plotY %>% filter(from_station_id %in% netclass4)
+plotYto4 = plotY %>% filter(to_station_id %in% netclass4)
+
+nfrom1 = plotYfrom1 %>% count(start_hour)
+nto1 = plotYto1 %>% count(stop_hour)
+nfrom2 = plotYfrom2 %>% count(start_hour)
+nto2 = plotYto2 %>% count(stop_hour)
+nfrom3 = plotYfrom3 %>% count(start_hour)
+nto3 = plotYto3 %>% count(stop_hour)
+nfrom4 = plotYfrom4 %>% count(start_hour)
+nto4 = plotYto4 %>% count(stop_hour)
+
+plotYfrom2to3=plotY %>% filter(from_station_id %in% residence,to_station_id %in% business)
+nfrom2to3 = plotYfrom2to3 %>% count(start_hour)
+
+
+par(mfrow=c(2,2))
+
+plot(x = nfrom1$start_hour, y = nfrom1$n, col = "black", type = "l", main = "General part flow pattern in weekend",xlab = "Time in a day",ylab = "Checkin and checkout amount")
+lines(x = nto1$stop_hour, y = nto1$n, col = "red")
+legend("topleft", bty = "n", legend = c("check out", "check in"), lty = c(1, 1), col = c("black", "red"), cex = 0.6)
+plot(x = nfrom2$start_hour, y = nfrom2$n, col = "black", type = "l",main = "Tourist part flow pattern in weekend",xlab = "Time in a day",ylab = "Checkin and checkout amount",ylim = c(0,9000))
+lines(x = nto2$stop_hour, y = nto2$n, col = "red")
+legend("topleft", bty = "n", legend = c("check out", "check in"), lty = c(1, 1), col = c("black", "red"), cex = 0.6)
+plot(x = nfrom3$start_hour, y = nfrom3$n, col = "black", type = "l",main = "Business part flow pattern in weekend",xlab = "Time in a day",ylab = "Checkin and checkout amount")
+lines(x = nto3$stop_hour, y = nto3$n, col = "red")
+legend("topleft",  bty = "n",legend = c("check out", "check in"), lty = c(1, 1), col = c("black", "red"), cex = 0.6)
+plot(x = nfrom4$start_hour, y = nfrom4$n, col = "black", type = "l",main="Transition part flow pattern in weekend",xlab = "Time in a day",ylab = "Checkin and checkout amount")
+lines(x = nto4$stop_hour, y = nto4$n, col = "red")
+legend("topleft", bty = "n",legend = c("check out", "check in"), lty = c(1, 1), col = c("black", "red"), cex = 0.6)
+```
+
+
+&emsp;&emsp;From the Figure5, in weekends, the original unbalanced flow pattern disappeaed. The figures were almost unimodal in every cluster in weekend which means the unbalanced pattern comes from the weekdays. 
+
+&emsp;&emsp;In addition, we did usertype analysis and gender analysis. We found that the proportion of  subscribers between transition and business area was about 20 percent larger than average level. And the proportion of male between transition and business area was about 15 percent larger than average level.We used two-tailed test of population proportion to test if the two propertions are significantly different. The null hypothesis of the two-tailed test about population proportion can be expressed as follows: $$p=p_0$$ where $p_0$ is hypothesized value of the true population proportion p.Define the test statistic z in terms of the sample proportion and the sample size: $$z=\frac{\bar{p}-p_0}{\sqrt{p_0(1-p_0)/n}}  $$ Then the null hypothesis of the two-tailed test is to be rejected if $z\le z_{\alpha/2}$ or $z\ge z_{\alpha/2}$ where $z_{\alpha/2}$ is the $100(1-\alpha)$ percentile of the  standard normal distribution.
+```{r,echo=F,message=FALSE, warning=FALSE}
+
+usertest<-function(data,class1,class2,time){
+  ##the trip from class1 to class2
+target1=data%>% filter(from_station_id %in% class1,to_station_id %in% class2) %>% left_join(station,c("to_station_id" = "id"))
+##the trip time from 5:00 to 10:00
+target2=target1 %>% filter(start_hour %in% time)
+## analyse the usetype
+user_target=target2 %>% group_by(usertype) %>% summarise(count=n())
+user_total=data %>% group_by(usertype) %>% summarise(count=n())
+total=c(user_target[1,2]+user_target[2,2],user_total[1,2]+user_total[3,2])
+subcriber=c(user_target[2,2],user_total[3,2])
+subcriber=as.numeric(subcriber)
+total=as.numeric(total)
+out1 = prop.test( subcriber, total,correct=FALSE)
+out1
+}
+
+#usertest(Y2015_NEW,residence,business,5:10)
+#usertest(Y2015_NEW,business,residence,5:10)
+
+```
+The output for the usertype test:
+
+|From Part|To Part  |Time      |proportion|p-value |
+|---------|---------|----------|----------|--------|
+|Transition|Business |5:00-10:00|0.9885693 |<2.2e-16|
+|Business |Transition|5:00-10:00|0.935719  |<2.2e-17|
+|total    |total    |5:00-10:00|0.7238193 |        |
+
+&emsp;&emsp;From the above test ,the portion of subscribers in the center of the city was much larger than that in the suburbs of the city. Around 90% of people were subscribers in the trips from transition part to business part, while there was about 70% of subscriber in all trips. This high percentage showed that there were more regular users in the center of the city.  
+
+```{r,echo=F,  message=FALSE, warning=FALSE}
+gendertest<-function(data,class1,class2,time){
+##the trip from class1 to class2
+target1=data%>% filter(from_station_id %in% class1,to_station_id %in% class2) %>% left_join(station,c("to_station_id" = "id"))
+##the trip time from 5:00 to 10:00
+target2=target1 %>% filter(start_hour %in% time)
+gender_target=target2 %>% group_by(gender) %>% summarise(count=n())
+gender_target=gender_target[c(1,2),]
+gender_total=Y2015_NEW%>% left_join(station,c("from_station_id"="id"))%>% group_by(gender) %>% summarise(count=n())
+gender_total=gender_total[c(1,2),]
+
+total=c(gender_target[1,2]+gender_target[2,2],gender_total[1,2]+gender_total[2,2])
+male=c(gender_target[2,2],gender_total[2,2])
+total=as.numeric(total)
+male=as.numeric(male)
+
+out2 = prop.test(male,total, correct=FALSE)
+out2
+
+}
+
+#gendertest(Y2015_NEW,residence,business,5:10)
+#gendertest(Y2015_NEW,business,residence,5:10)
+```
+
+
+The output for the gender test is:
+
+|From Part|To Part  |Time      |proportion|p-value |
+|---------|---------|----------|----------|--------|
+|Transition|Business |5:00-10:00|0.9298129 |<2.2e-16|
+|Business |Transition|5:00-10:00|0.8888102 |<2.2e-16|
+|total    |total    |5:00-10:00|0.7490187 |        |
+
+&emsp;&emsp;Besides, by analyzing gender of users, we found the proportion of males is larger in trips from transition area to business area.
+
+```{r,echo=F, message=FALSE, warning=FALSE,fig.cap="Range of age"}
+myfunc <- function(v1) {
+  deparse(substitute(v1))
+}
+##analysize age
+agetest<-function(data,class1,class2,time){
+##the trip from class1 to class2
+target1=data%>% filter(from_station_id %in% class1,to_station_id %in% class2) %>% left_join(station,c("to_station_id" = "id"))
+##the trip time from 5:00 to 10:00
+target2=target1 %>% filter(start_hour %in% time)
+
+classcount=target2 %>% filter(usertype=="Subscriber") %>% mutate(age =2016-birthyear)%>%group_by(age) %>% summarise(count=n()) 
+
+totalcount=Y2015_NEW%>% filter(usertype=="Subscriber") %>% mutate(age =2016-birthyear)%>%group_by(age) %>% summarise(count=n()) 
+return(list(classcount,totalcount))
+
+}
+
+
+p1<-agetest(Y2015_NEW,residence,business,5:10)[[1]] %>% ggplot()+
+  geom_point(mapping=aes(x=age,y=count/sum(count)))+
+  xlab("the range of age")+
+  ylab("the proportion of the count")+
+  ggtitle("from Transition to Business")
+p2<-agetest(Y2015_NEW,residence,business,5:10)[[2]] %>% ggplot()+
+  geom_point(mapping=aes(x=age,y=count/sum(count)))+
+  xlab("the range of age")+
+  ylab("the proportion of the count")+
+  ggtitle("from Total to Total")
+p3<-agetest(Y2015_NEW,business,residence,5:10)[[1]] %>% ggplot()+
+  geom_point(mapping=aes(x=age,y=count/sum(count)))+
+  xlab("the range of age")+
+  ylab("the proportion of the count")+
+  ggtitle("from Business to Transition")
+p4<-agetest(Y2015_NEW,business,residence,5:10)[[2]] %>% ggplot()+
+  geom_point(mapping=aes(x=age,y=count/sum(count)))+
+  xlab("the range of age")+
+  ylab("the proportion of the count")+
+  ggtitle("from Total to Total")
+multiplot(p1, p2, p3, p4, cols=2)
+```
+
+&emsp;&emsp;Also, we did some age analysis of the users and found that the users in the center of the city tended to be older than the general users as shown in Figure6. The users' age distribution in the center of the city was different from the age distribution in the suburbs of the city. The users' ages tended to be 30s to 50s in the center of the city, while the general age was much younger than this.
+
+&emsp;&emsp;Considering all of the analyses above, we can give a profile of users taking trips from transition to business areas in the center of the city. They are mainly male subscribers in their 30s to 50s, which suggests that they might have stable jobs considering their ages and regular needs of bicycle trips. These people are thus likely to be commuters riding bikes to work.
+
+##Conclusion
+
+&emsp;&emsp;This study investigated bike-sharing system from station perspective. We developed an effective approach to extract four meaningful clusters from massive amounts of travel data. Among these four clusters, transition area and business area have opposite unbalanced flow patterns. 
+
+&emsp;&emsp;To figure out the cause of the unbalanced problem, we further analyzed the trip sources and user features of these two areas. For trip sources, we found that in peak morning hours, more than half trips that started from transition area ended at business area. While in peak afternoon hours, trip directions became opposite. As for users associated with these trips, we found that they were mostly male subscribers of 30s to 50s. Since these users were likely to have a stable jobs and they were moving in the center of Chicago in morning and afternoon peak hours, we concluded that the unbalanced pattern was caused by commuters.
+
+&emsp;&emsp;The derived flow patterns and cause analysis were valuable to provide reference and evidence for sustainable transportation plan. For system operators, they may need to consider additional redistribution approaches to solve over-demand for bikes and docks in the transition and business area. For instance, the system operators may propose incentives to encourage people to return bikes to the transition area during peak morning hours. For government, they may get better understanding to traffic demands and make improvement to public transportation, which may help ease the traffic problem in Chicago. In addition, the general flow pattern of Chicago may apply to cities with similar downtown structures. It is a good reference for bike-sharing system design.
+
+###Limitations & Future work 
+&emsp;&emsp;By now we have found out that an unbalanced flow pattern exists, but this result cannot be directly used. From our plots and maps we might suggest that new stations are needed in certain areas, such as the business area, but to figure out where and how many new stations should be built, we need to have a quantified measure of effects of newly online stations on surrounding stations.
+
+
